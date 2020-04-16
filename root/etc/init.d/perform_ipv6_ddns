@@ -5,6 +5,7 @@ STOP=17
 __BASIC_COMMAND="curl -RsS --noproxy '*'"
 __URL_BASE="https://api.cloudflare.com/client/v4"
 __LOG_FILE="/var/etc/ipv6_ddns.log"
+__SLEEP_TIME=1
 
 log() {
     if [ "$1" ]; then
@@ -97,59 +98,78 @@ update_IPv6_of_one_device() {
 
 get_zone_id() {
     __RUN_COMMAND="$__BASIC_COMMAND --request GET '$__URL_BASE/zones?name=$1'"
-    local zone_message
+    log "Running command: $__RUN_COMMAND"
+    local zone_message retry=5
 
     while :; do
         zone_message=$(eval $__RUN_COMMAND)
         err=$?
         [ $err -eq 0 ] && [ $(echo $zone_message | jsonfilter -e "@.success") = "true" ] && break
         log $zone_message
-        sleep 1
+        sleep $__SLEEP_TIME
+        if [ $retry -le 0 ]; then
+            echo ""
+            return 1
+        fi
+        log "$retry retrys left..."
+        retry=$(($retry - 1))
     done
 
     zone_ID=$(echo $zone_message | jsonfilter -e "@.result[0].id")
 
-    log "zone ID: $zone_ID"
-
     echo $zone_ID
+    return 0
 }
 
 get_current_AAAA_record() {
     local zone_ID=$1 host=$2 record record_ID
     __RUN_COMMAND="$__BASIC_COMMAND --request GET '$__URL_BASE/zones/$zone_ID/dns_records?name=$host&type=AAAA'"
-    local res
+    log "Running command: $__RUN_COMMAND"
+    local res retry=5
 
     while :; do
         res=$(eval $__RUN_COMMAND)
         err=$?
         [ $err -eq 0 ] && [ $(echo $res | jsonfilter -e "@.success") = "true" ] && break
         log $res
-        sleep 1
+        sleep $__SLEEP_TIME
+        if [ $retry -le 0 ]; then
+            echo ""
+            return 1
+        fi
+        log "$retry retrys left..."
+        retry=$(($retry - 1))
     done
 
     record=$(echo $res | jsonfilter -e "@.result[0].content")
     record_ID=$(echo $res | jsonfilter -e "@.result[0].id")
-    # log "record:$record"
-    log "record ID: $record_ID"
+
     echo "$record $record_ID"
+    return 0
 }
 
 update_AAAA_record() {
     local domain=$1 addr=$2 record_ID=$3 zone_ID=$4
     local data="{\"id\":\"${zone_ID}\",\"type\":\"AAAA\",\"name\":\"${domain}\",\"content\":\"${addr}\",\"ttl\":120,\"proxied\":false}"
     __RUN_COMMAND="$__BASIC_COMMAND --request PUT --data '$data' '$__URL_BASE/zones/$zone_ID/dns_records/$record_ID'"
-    local res
+    log "Running command: $__RUN_COMMAND"
+    local res retry=5
 
     while :; do
         res=$(eval $__RUN_COMMAND)
         err=$?
         [ $err -eq 0 ] && [ $(echo $res | jsonfilter -e "@.success") = "true" ] && break
         log $res
-        sleep 1
+        sleep $__SLEEP_TIME
+        if [ $retry -le 0 ]; then
+            echo ""
+            return 1
+        fi
+        log "$retry retrys left..."
+        retry=$(($retry - 1))
     done
 
     echo $res >>/tmp/ippppp
-    log "update $domain -> $addr success."
 
     return 0
 }
@@ -159,25 +179,39 @@ update_AAAA_record_of_one_device() {
     config_get lookupHostname $1 lookupHostname
     config_get domain $1 domain
     config_get current_addr $1 current_addr
+    local err
     local host=$(echo $domain | cut -d "@" -f 1)
     local zone=$(echo $domain | cut -d "@" -f 2)
 
     log "update IPv6 record for $host.$zone"
 
     local zone=$(echo $domain | cut -d "@" -f 2)
-    [ -z $"zone" ] && log "Error: zone is empty" && return 1
+    [ -z $"zone" ] && log "Error: zone is empty\n" && return 1
+    log "Getting zone ID..."
     zone_ID=$(get_zone_id $zone)
+    err=$?
+    [ $err -gt 0 ] && log "Error: get zone ID fail\n" && return 1
+    log "zone ID: $zone_ID"
 
-    [ -z "$zone_ID" ] && log "Error: zone_ID is empty" && return 1
-    [ -z "$host" ] && log "Error: host is empty" && return 1
+    [ -z "$zone_ID" ] && log "Error: zone_ID is empty\n" && return 1
+    [ -z "$host" ] && log "Error: host is empty\n" && return 1
+    log "Getting record and record ID..."
     record_and_ID=$(get_current_AAAA_record $zone_ID $host.$zone)
+    err=$?
+    [ $err -gt 0 ] && log "Error: get record and record ID fail\n" && return 1
     record=$(echo $record_and_ID | cut -d " " -f 1)
     record_ID=$(echo $record_and_ID | cut -d " " -f 2)
+    # log "record:$record"
+    log "record ID: $record_ID"
 
-    [ -z "$current_addr" ] && log "Error: current_addr is empty" && return 1
-    [ -z "$record_ID" ] && log "Error: record_ID is empty" && return 1
+    [ -z "$current_addr" ] && log "Error: current_addr is empty\n" && return 1
+    [ -z "$record_ID" ] && log "Error: record_ID is empty\n" && return 1
     [ "$record" = "$current_addr" ] && log "No need to update record.\n" && return 0
+    log "Updating AAAA record..."
     update_AAAA_record $host.$zone $current_addr $record_ID $zone_ID
+    err=$?
+    [ $err -gt 0 ] && log "Error: update AAAA record fail\n" && return 1
+    log "update $domain -> $addr success."
 
     log ""
 
