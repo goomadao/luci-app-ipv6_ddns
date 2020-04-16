@@ -1,0 +1,34 @@
+<script type="text/javascript">
+  //<![CDATA[
+  XHR.poll(
+    5,
+    "<%=url([[admin]], [[services]], [[ipv6_ddns]], [[status]])%>",
+    null,
+    function (x, data) {
+      var tb = document.getElementById("ipv6_ddns_status");
+      if (data && tb) {
+        if (data.running) {
+          var links =
+            "<em><b><font color=green><%:The IPv6 DDNS service is running.%></font></b></em>";
+          tb.innerHTML = links;
+        } else {
+          tb.innerHTML =
+            "<em><b><font color=red><%:The IPv6 DDNS service is not running.%></font></b></em>";
+        }
+      }
+    }
+  );
+  //]]>
+</script>
+<style>
+  .mar-10 {
+    margin-left: 50px;
+    margin-right: 10px;
+  }
+</style>
+<fieldset class="cbi-section">
+  <legend><%:IPv6 DDNS Status%></legend>
+  <p id="ipv6_ddns_status">
+    <em><%:Collecting data...%></em>
+  </p>
+</fieldset>

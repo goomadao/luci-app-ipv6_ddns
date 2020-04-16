@@ -16,6 +16,8 @@ m =
 )
 m:chain("luci")
 
+m:section(SimpleSection).template="ipv6_ddns/ipv6_ddns_status"
+
 s = m:section(NamedSection, "common", "ipv6_ddns", translate("Global Settings"))
 s.anonymous = true
 s.addremove = false
