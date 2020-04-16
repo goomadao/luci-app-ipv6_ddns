@@ -1,0 +1,4 @@
+config ipv6_ddns 'common'
+	option enable '0'
+    option email ''
+    option key ''

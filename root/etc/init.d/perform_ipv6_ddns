@@ -1,0 +1,206 @@
+#!/bin/sh /etc/rc.common
+START=93
+STOP=17
+
+__BASIC_COMMAND="curl -RsS --noproxy '*'"
+__URL_BASE="https://api.cloudflare.com/client/v4"
+__LOG_FILE="/var/etc/ipv6_ddns.log"
+
+log() {
+    if [ "$1" ]; then
+        echo -e "[$(date)] - $1" >>$__LOG_FILE
+    else
+        echo -e "" >>$__LOG_FILE
+    fi
+}
+
+#expand IPv6 address to get rid of '::'
+expand_IPv6() {
+    addr=$1
+    echo $addr | grep -qs "^:" && addr="0$addr"
+    echo $addr | grep -qs ":$" && addr="${addr}0"
+    double_count=$(echo $addr | grep -o "::" | wc -l)
+    if [ $double_count -eq 0 ]; then
+        echo $addr
+        return 0
+    fi
+    count=$(echo $addr | grep -o ":" | wc -l)
+    count=$((9 - $count))
+    colons=':'
+    colon='0:'
+    index=1
+    while [ $index -lt $count ]; do
+        index=$(($index + 1))
+        colons=${colons}${colon}
+    done
+    addr=$(echo $addr | sed "s/::/$colons/g")
+    echo $addr
+    return 0
+}
+
+min_IPv6() {
+    addr1=$(echo $(expand_IPv6 $1))
+    addr2=$(echo $(expand_IPv6 $2))
+    pos=1
+    while [ $pos -lt 9 ]; do
+        num1=$((0x$(echo $addr1 | cut -d ":" -f $pos)))
+        num2=$((0x$(echo $addr2 | cut -d ":" -f $pos)))
+        [ $num1 -gt $num2 ] && echo $2 && return 0
+        [ $num1 -lt $num2 ] && echo $1 && return 0
+        pos=$(($pos + 1))
+    done
+}
+
+get_prefix() {
+    prefix=$(ubus call network.interface.lan status | jsonfilter -e '@["ipv6-prefix-assignment"][0].address')
+    length=$((${#prefix} - 2))
+    echo ${prefix:0:${length}}
+}
+
+get_min_IPv6_of_one_device() {
+    mac=$1
+    local current
+
+    if [ $(cat /sys/devices/virtual/net/br-lan/address | grep -i $1 | wc -l) -gt 0 ]; then
+        current=$(ubus call network.interface.lan status | jsonfilter -e '@["ipv6-prefix-assignment"][0]["local-address"].address')
+        log "current:$current"
+    else
+        prefix=$(echo $(get_prefix))
+
+        addrs=$(ip -6 nei | grep $prefix | grep -i $mac | cut -d " " -f 1 | xargs)
+
+        current=$(echo $addrs | cut -d " " -f 1)
+        index=2
+        length=$(($(echo $addrs | wc -w) + 1))
+        while [ $index -lt $length ]; do
+            current=$(min_IPv6 $current $(echo $addrs | cut -d " " -f $index))
+            index=$(($index + 1))
+        done
+    fi
+
+    echo $current
+    log "$mac - $current"
+}
+
+update_IPv6_of_one_device() {
+    local mac
+    config_get mac $1 device
+
+    log "update IPv6 addr for $mac"
+
+    addr=$(echo $(get_min_IPv6_of_one_device $mac))
+
+    uci set ipv6_ddns.$1.current_addr=$addr
+    uci commit ipv6_ddns
+    log ""
+}
+
+get_zone_id() {
+    __RUN_COMMAND="$__BASIC_COMMAND --request GET '$__URL_BASE/zones?name=$1'"
+    local zone_message
+
+    while :; do
+        zone_message=$(eval $__RUN_COMMAND)
+        err=$?
+        [ $err -eq 0 ] && [ $(echo $zone_message | jsonfilter -e "@.success") = "true" ] && break
+        log $zone_message
+        sleep 1
+    done
+
+    zone_ID=$(echo $zone_message | jsonfilter -e "@.result[0].id")
+
+    log "zone ID: $zone_ID"
+
+    echo $zone_ID
+}
+
+get_current_AAAA_record() {
+    local zone_ID=$1 host=$2 record record_ID
+    __RUN_COMMAND="$__BASIC_COMMAND --request GET '$__URL_BASE/zones/$zone_ID/dns_records?name=$host&type=AAAA'"
+    local res
+
+    while :; do
+        res=$(eval $__RUN_COMMAND)
+        err=$?
+        [ $err -eq 0 ] && [ $(echo $res | jsonfilter -e "@.success") = "true" ] && break
+        log $res
+        sleep 1
+    done
+
+    record=$(echo $res | jsonfilter -e "@.result[0].content")
+    record_ID=$(echo $res | jsonfilter -e "@.result[0].id")
+    # log "record:$record"
+    log "record ID: $record_ID"
+    echo "$record $record_ID"
+}
+
+update_AAAA_record() {
+    local domain=$1 addr=$2 record_ID=$3 zone_ID=$4
+    local data="{\"id\":\"${zone_ID}\",\"type\":\"AAAA\",\"name\":\"${domain}\",\"content\":\"${addr}\",\"ttl\":120,\"proxied\":false}"
+    __RUN_COMMAND="$__BASIC_COMMAND --request PUT --data '$data' '$__URL_BASE/zones/$zone_ID/dns_records/$record_ID'"
+    local res
+
+    while :; do
+        res=$(eval $__RUN_COMMAND)
+        err=$?
+        [ $err -eq 0 ] && [ $(echo $res | jsonfilter -e "@.success") = "true" ] && break
+        log $res
+        sleep 1
+    done
+
+    echo $res >>/tmp/ippppp
+    log "update $domain -> $addr success."
+
+    return 0
+}
+
+update_AAAA_record_of_one_device() {
+    local lookupHostname domain current_addr
+    config_get lookupHostname $1 lookupHostname
+    config_get domain $1 domain
+    config_get current_addr $1 current_addr
+    local host=$(echo $domain | cut -d "@" -f 1)
+    local zone=$(echo $domain | cut -d "@" -f 2)
+
+    log "update IPv6 record for $host.$zone"
+
+    local zone=$(echo $domain | cut -d "@" -f 2)
+    [ -z $"zone" ] && log "Error: zone is empty" && return 1
+    zone_ID=$(get_zone_id $zone)
+
+    [ -z "$zone_ID" ] && log "Error: zone_ID is empty" && return 1
+    [ -z "$host" ] && log "Error: host is empty" && return 1
+    record_and_ID=$(get_current_AAAA_record $zone_ID $host.$zone)
+    record=$(echo $record_and_ID | cut -d " " -f 1)
+    record_ID=$(echo $record_and_ID | cut -d " " -f 2)
+
+    [ -z "$current_addr" ] && log "Error: current_addr is empty" && return 1
+    [ -z "$record_ID" ] && log "Error: record_ID is empty" && return 1
+    [ "$record" = "$current_addr" ] && log "No need to update record.\n" && return 0
+    update_AAAA_record $host.$zone $current_addr $record_ID $zone_ID
+
+    log ""
+
+    return 0
+
+}
+
+start() {
+    echo '' >/tmp/ippppp
+    config_load "ipv6_ddns"
+
+    local __EMAIL __KEY
+    config_get __EMAIL common email
+    config_get __KEY common key
+
+    __BASIC_COMMAND="$__BASIC_COMMAND --header 'X-Auth-Email: $__EMAIL' "
+    __BASIC_COMMAND="$__BASIC_COMMAND --header 'X-Auth-Key: $__KEY' "
+    __BASIC_COMMAND="$__BASIC_COMMAND --header 'Content-Type: application/json' "
+
+    config_foreach update_IPv6_of_one_device service
+
+    config_load "ipv6_ddns"
+
+    config_foreach update_AAAA_record_of_one_device service $__EMAIL $__KEY
+    return 0
+}

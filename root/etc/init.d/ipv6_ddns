@@ -1,0 +1,32 @@
+#!/bin/sh /etc/rc.common
+START=93
+STOP=17
+
+start() {
+    echo "apply" >>/tmp/ippppp
+    config_load "ipv6_ddns"
+    config_get_bool __ENABLE common enable
+
+    echo $__ENABLE >>/tmp/ippppp
+
+    if [ "$__ENABLE" = "1" ]; then
+        sed -i '/perform_ipv6_ddns/d' /etc/crontabs/root >/dev/null 2>&1
+        /etc/init.d/cron restart
+        echo "*/3 * * * * /etc/init.d/perform_ipv6_ddns start" >>/etc/crontabs/root
+        echo "IPv6 DDNS started."
+        echo "start:IPv6 DDNS started." >>/tmp/ippppp
+        return 0
+    else
+        sed -i '/perform_ipv6_ddns/d' /etc/crontabs/root >/dev/null 2>&1
+        echo "IPv6 DDNS stopped."
+        echo "start:IPv6 DDNS stopped." >>/tmp/ippppp
+        return 0
+    fi
+}
+
+stop() {
+    sed -i '/perform_ipv6_ddns/d' /etc/crontabs/root >/dev/null 2>&1
+    echo "IPv6 DDNS stopped."
+    echo "stop:IPv6 DDNS stopped." >>/tmp/ippppp
+    return 0
+}
