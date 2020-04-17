@@ -64,7 +64,6 @@ get_min_IPv6_of_one_device() {
 
     if [ $(cat /sys/devices/virtual/net/br-lan/address | grep -i $1 | wc -l) -gt 0 ]; then
         current=$(ubus call network.interface.lan status | jsonfilter -e '@["ipv6-prefix-assignment"][0]["local-address"].address')
-        log "current:$current"
     else
         prefix=$(echo $(get_prefix))
 
@@ -201,8 +200,7 @@ update_AAAA_record_of_one_device() {
     [ $err -gt 0 ] && log "Error: get record and record ID fail\n" && return 1
     record=$(echo $record_and_ID | cut -d " " -f 1)
     record_ID=$(echo $record_and_ID | cut -d " " -f 2)
-    # log "record:$record"
-    log "record ID: $record_ID"
+    log "record ID: $record_ID  record:$record"
 
     [ -z "$current_addr" ] && log "Error: current_addr is empty\n" && return 1
     [ -z "$record_ID" ] && log "Error: record_ID is empty\n" && return 1
