@@ -45,6 +45,7 @@ expand_IPv6() {
 }
 
 min_IPv6() {
+    [ "$1" = "$2" ] && echo $1 && return 0
     [ -z $1 ] && echo $2 && return 0
     [ -z $2 ] && echo $1 && return 0
     addr1=$(echo $(expand_IPv6 $1))
