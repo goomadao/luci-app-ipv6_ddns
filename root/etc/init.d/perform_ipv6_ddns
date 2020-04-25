@@ -45,6 +45,8 @@ expand_IPv6() {
 }
 
 min_IPv6() {
+    [ -z $1 ] && echo $2 && return 0
+    [ -z $2 ] && echo $1 && return 0
     addr1=$(echo $(expand_IPv6 $1))
     addr2=$(echo $(expand_IPv6 $2))
     pos=1
@@ -61,6 +63,14 @@ get_prefix() {
     prefix=$(ubus call network.interface.lan status | jsonfilter -e '@["ipv6-prefix-assignment"][0].address')
     length=$((${#prefix} - 2))
     echo ${prefix:0:${length}}
+}
+
+get_IPv6_from_odhcpd() {
+    mac=$(echo $1 | sed 's/://g' | sed 's/$/ /')
+    # 0001---DUID-LLT
+    # 0003---DUID-LL
+    local addr=$(cat /tmp/hosts/odhcpd | grep ".* .* 000[13]" | grep -i ".* .* .*$mac" | cut -d " " -f 9 | cut -d '/' -f 1)
+    echo $(cat /tmp/hosts/odhcpd | grep -i $mac | cut -d " " -f 9 | cut -d '/' -f 1)
 }
 
 get_min_IPv6_of_one_device() {
@@ -82,6 +92,9 @@ get_min_IPv6_of_one_device() {
             index=$(($index + 1))
         done
     fi
+
+    local distributedAddr=$(get_IPv6_from_odhcpd $mac)
+    current=$(min_IPv6 $current $distributedAddr)
 
     echo $current
     log "$mac - $current"
