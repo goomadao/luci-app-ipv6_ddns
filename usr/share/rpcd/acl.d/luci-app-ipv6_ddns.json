@@ -1,0 +1,11 @@
+{
+  "luci-app-ipv6_ddns": {
+    "description": "Grant UCI access for luci-app-ipv6_ddns",
+    "read": {
+      "uci": ["ipv6_ddns"]
+    },
+    "write": {
+      "uci": ["ipv6_ddns"]
+    }
+  }
+}
